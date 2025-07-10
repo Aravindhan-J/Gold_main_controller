@@ -1,1 +1,0 @@
-# Gold_main_controller
