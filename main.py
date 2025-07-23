@@ -16,6 +16,7 @@ def resource_path(rel_path):
 
 PLACEHOLDER_ICON = OTHER_ICONS.get("place_holder", "images/placeholder.png")
 FAVICON_ICON = OTHER_ICONS.get("maincontroller", "images/maincontroller.png")
+LOADING_ICON = OTHER_ICONS.get("loading", "images/loading.png")
 
 THEMES = {
     "dark": {
@@ -90,11 +91,12 @@ class StatusDot(tk.Canvas):
         self.create_oval(4, 4, 16, 16, fill=color, outline=color)
 
 class DeviceCard(tk.Frame):
-    def __init__(self, parent, device, icon_img=None, theme=THEMES["dark"]):
+    def __init__(self, parent, device, icon_img=None, loading_img=None, theme=THEMES["dark"]):
         super().__init__(parent, width=340, height=140, bg=theme["card_bg"], highlightthickness=2)
         self.device = device
         self.theme = theme
         self.icon_img = icon_img
+        self.loading_img = loading_img
         self._loading = False
         self.grid_propagate(False)
         self._build_card()
@@ -126,6 +128,12 @@ class DeviceCard(tk.Frame):
                                    wraplength=290, justify="left", anchor="w")
         self.result_lbl.pack(anchor="w", padx=18, pady=(1, 0), fill="x")
 
+        # Loading icon (initially hidden)
+        self.loading_icon_lbl = tk.Label(self, bg=self.theme["card_bg"])
+        self.loading_icon_lbl.pack(anchor="center", pady=(2, 0))
+        self.loading_icon_lbl.place(relx=0.5, rely=0.67, anchor="center")
+        self.loading_icon_lbl.lower()  # always below result text
+
     def set_theme(self, theme):
         self.theme = theme
         self.configure(bg=theme["card_bg"], highlightbackground=theme["card_border"], highlightcolor=theme["card_border"])
@@ -133,9 +141,10 @@ class DeviceCard(tk.Frame):
             if isinstance(w, tk.Frame):
                 w.configure(bg=theme["card_bg"])
         self.name_lbl.configure(fg=theme["accent"], bg=theme["card_bg"])
-        self.status_lbl.configure(bg=theme["card_bg"], fg=theme["unavailable"])
+        self.status_lbl.configure(bg=theme["card_bg"], fg=self.theme["unavailable"])
         self.result_lbl.configure(bg=theme["card_bg"])
         self.status_dot.set_theme(theme)
+        self.loading_icon_lbl.configure(bg=theme["card_bg"])
 
     def update_status(self):
         available = self.device.serial is not None and self.device.serial.is_open and self.device.available
@@ -146,22 +155,30 @@ class DeviceCard(tk.Frame):
             self.status_lbl.configure(text="Unavailable — disconnected", fg=self.theme["unavailable"])
         res = self.device.last_result
         if self._loading:
-            self.result_lbl.configure(text="Loading...", fg=self.theme["subtitle"])
-        elif res:
-            if "weight_display" in res:
-                self.result_lbl.configure(text=res["weight_display"], fg=self.theme["result"])
-            elif "weight" in res:
-                self.result_lbl.configure(text=f"Weight = {res['weight']}", fg=self.theme["result"])
-            elif "error" in res:
-                txt = res["error"]
-                if "readonly" in txt or "read only" in txt:
-                    self.result_lbl.configure(text=txt, fg=self.theme["readonly"], bg=self.theme["readonly_bg"])
-                else:
-                    self.result_lbl.configure(text=txt, fg=self.theme["unavailable"], bg=self.theme["card_bg"])
-            else:
-                self.result_lbl.configure(text="No value", fg=self.theme["fg"], bg=self.theme["card_bg"])
+            # Hide text, show spinner
+            self.result_lbl.configure(text="", fg=self.theme["result"])
+            self.loading_icon_lbl.lift()
+            self.loading_icon_lbl.configure(image=self.loading_img)
+            self.loading_icon_lbl.place(relx=0.5, rely=0.67, anchor="center")
         else:
-            self.result_lbl.configure(text="", fg=self.theme["fg"], bg=self.theme["card_bg"])
+            # Hide spinner, show text
+            self.loading_icon_lbl.configure(image="")
+            self.result_lbl.lift()
+            if res:
+                if "weight_display" in res:
+                    self.result_lbl.configure(text=res["weight_display"], fg=self.theme["result"])
+                elif "weight" in res:
+                    self.result_lbl.configure(text=f"Weight = {res['weight']}", fg=self.theme["result"])
+                elif "error" in res:
+                    txt = res["error"]
+                    if "readonly" in txt or "read only" in txt:
+                        self.result_lbl.configure(text=txt, fg=self.theme["readonly"], bg=self.theme["readonly_bg"])
+                    else:
+                        self.result_lbl.configure(text=txt, fg=self.theme["unavailable"], bg=self.theme["card_bg"])
+                else:
+                    self.result_lbl.configure(text="No value", fg=self.theme["fg"], bg=self.theme["card_bg"])
+            else:
+                self.result_lbl.configure(text="", fg=self.theme["fg"], bg=self.theme["card_bg"])
 
     def show_loading(self, is_loading=True):
         self._loading = is_loading
@@ -188,6 +205,8 @@ class GoldControllerApp(tk.Tk):
         self.icon_imgs = {}
         for k, url in DEVICE_ICONS.items():
             self.icon_imgs[k] = get_icon(url)  # returns a Tk image object
+
+        self.loading_img = get_icon(LOADING_ICON, size=(38, 38))
 
         self.devices = [SerialDevice(**cfg) for cfg in DEVICE_CONFIGS]
         self.device_cards = []
@@ -230,7 +249,7 @@ class GoldControllerApp(tk.Tk):
             for col in range(3):
                 if idx < len(self.devices):
                     dev = self.devices[idx]
-                    card = DeviceCard(self.card_grid, dev, icon_img=self.icon_imgs.get(dev.name), theme=self.theme)
+                    card = DeviceCard(self.card_grid, dev, icon_img=self.icon_imgs.get(dev.name), loading_img=self.loading_img, theme=self.theme)
                     card.grid(row=row, column=col, padx=34, pady=18)
                     self.device_cards.append(card)
                     idx += 1
