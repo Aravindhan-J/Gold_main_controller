@@ -1,3 +1,4 @@
-pyserial==3.5
-kivy==2.3.1
-requests==2.32.4
+pyserial==3.5         # Latest stable version as of now
+# kivy==2.3.1           # Still current latest official stable release
+requests==2.32.4      # Latest stable version (May 2025)
+pillow==10.3.0        # Needed for image loading in Tkinter (added)

@@ -1,5 +1,3 @@
-# serial_device.py
-
 import serial
 import threading
 import queue
@@ -7,6 +5,7 @@ import json
 import datetime
 import requests
 import traceback
+import re
 from config import LOGFILE, HTTP_ENDPOINT, TEST_COMMAND
 from db import log_result
 
@@ -35,10 +34,12 @@ class SerialDevice(threading.Thread):
         self.serial = None
         self.last_result = None
         self.status = "disconnected"
-        self.available = False  # For green/red indicator
+        self.available = False
+        self.last_error = None
         self.cmd_queue = queue.Queue()
         self.running = True
         self._open_serial()
+        self.check_availability()
         self.start()
 
     def _open_serial(self):
@@ -50,108 +51,146 @@ class SerialDevice(threading.Thread):
             self.available = False
 
     def check_availability(self):
-        """Send 'B' to check device is alive (updates .available/.status)."""
+        """Check if device is available, log every check."""
+        response = ""
+        err = None
         if self.serial and self.serial.is_open:
             try:
                 self.serial.reset_input_buffer()
-                self.serial.write(TEST_COMMAND.encode('utf-8') + b'\n')
-                response = self.serial.readline().decode('utf-8').strip()
-                if response:
-                    self.available = True
-                    self.status = "available"
-                else:
-                    self.available = False
-                    self.status = "no response"
+                self.serial.write(b'B\n')
+                response = self.serial.readline().decode('utf-8', errors='ignore').strip()
+                self.available = bool(response)
+                self.status = "available" if self.available else "no response"
             except Exception as e:
                 self.available = False
                 self.status = f"error: {e}"
+                err = str(e)
         else:
             self.available = False
             self.status = "disconnected"
+            err = "disconnected"
+
+        log_result(self.name, "B", response, err)
 
     def get_measurement(self):
-        """Send S or SI to device, expect JSON, update .last_result/.status."""
+        """
+        Send 'S' to device, expect 'S S      1.182 g'
+        Log every attempt/result.
+        """
+        self.last_result = None
+        self.last_error = None
+        result = None
+        err = None
+
         if self.serial and self.serial.is_open:
             try:
                 self.serial.reset_input_buffer()
-                # Try S, SI, si (case-insensitive, as required by your device)
-                for cmd in ["S", "SI", "si"]:
-                    self.serial.write(cmd.encode('utf-8') + b'\n')
-                    line = self.serial.readline().decode('utf-8').strip()
+                self.serial.write(b'S\n')
+                value = None
+                for _ in range(3):
+                    line = self.serial.readline().decode('utf-8', errors='ignore').strip()
                     if not line:
                         continue
-                    try:
-                        data = json.loads(line)
-                        self.last_result = data
+                    match = re.match(r'(?:S S|S)\s*([\d.]+)\s*g', line)
+                    if match:
+                        value = match.group(1)
+                        result = {"weight_display": f"Weight = {value} g"}
                         self.status = "measurement ok"
-                        log_result(self.name, cmd, json.dumps(data), None)
-                        return True
-                    except Exception as e:
-                        self.status = f"bad json: {line}"
-                        log_result(self.name, cmd, None, f"JSON decode error: {line} | {e}")
-                return False
+                        self.last_result = result
+                        break
+                    else:
+                        # Even if line doesn't match, log it as a raw result
+                        result = {"raw": line}
+                        self.last_result = result
+                if not value:
+                    err = "Could not parse value"
+                    self.status = "unexpected response"
+                    self.last_result = {"error": err}
             except Exception as e:
+                err = f"Device error: {e}"
                 self.status = f"error: {e}"
-                log_result(self.name, 'S/SI', None, str(e))
-                return False
+                self.last_result = {"error": str(e)}
         else:
+            err = "Device not connected"
             self.status = "disconnected"
-            return False
+            self.last_result = {"error": err}
+
+        log_result(self.name, "S", self.last_result, err)
+        self.last_error = err
+        return err is None
 
     def get_last_json(self):
-        """Send P, expect JSON, update .last_result/.status."""
+        """
+        Send 'P' to device, expect JSON. Log every result.
+        """
+        self.last_result = None
+        self.last_error = None
+        result = None
+        err = None
+
         if self.serial and self.serial.is_open:
             try:
                 self.serial.reset_input_buffer()
                 self.serial.write(b'P\n')
-                line = self.serial.readline().decode('utf-8').strip()
+                line = self.serial.readline().decode('utf-8', errors='ignore').strip()
                 if line:
                     try:
                         data = json.loads(line)
+                        result = data
                         self.last_result = data
                         self.status = "last result ok"
-                        log_result(self.name, "P", json.dumps(data), None)
-                        return True
                     except Exception as e:
+                        err = f"JSON decode error: {line}"
                         self.status = f"bad json: {line}"
-                        log_result(self.name, "P", None, f"JSON decode error: {line} | {e}")
-                        return False
+                        result = {"raw": line}
+                        self.last_result = {"error": err}
                 else:
+                    err = "No response"
                     self.status = "no response for P"
-                    return False
+                    self.last_result = {"error": err}
             except Exception as e:
+                err = str(e)
                 self.status = f"error: {e}"
-                log_result(self.name, "P", None, str(e))
-                return False
+                self.last_result = {"error": err}
         else:
+            err = "Device not connected"
             self.status = "disconnected"
-            return False
+            self.last_result = {"error": err}
+
+        log_result(self.name, "P", self.last_result, err)
+        self.last_error = err
+        return err is None
 
     def run(self):
-        # On startup, check availability
         self.check_availability()
         while self.running:
             try:
                 try:
                     cmd = self.cmd_queue.get(timeout=0.1)
-                    if cmd.upper() in ("S", "SI"):
+                    if cmd.upper() == "S":
                         self.get_measurement()
                     elif cmd.upper() == "P":
                         self.get_last_json()
-                        # HTTP sync can be triggered from UI after getting last json
                     elif cmd.upper() == "B":
                         self.check_availability()
+                    else:
+                        # Log any custom/unknown command
+                        log_result(self.name, cmd, "NotImplemented", "Unknown command")
                 except queue.Empty:
-                    # Periodic availability check
                     self.check_availability()
                     continue
             except Exception as ex:
                 self.status = f"error: {ex}"
-                log_result(self.name, '', None, traceback.format_exc())
+                self.last_error = str(ex)
+                self.last_result = {"error": str(ex)}
+                log_result(self.name, "run-loop", self.last_result, str(ex))
 
     def send_command(self, cmd):
         if self.serial and self.serial.is_open:
             self.cmd_queue.put(cmd)
+        else:
+            # Always log attempts to send when disconnected
+            log_result(self.name, cmd, "Not sent", "Device not connected")
 
     def close(self):
         self.running = False
