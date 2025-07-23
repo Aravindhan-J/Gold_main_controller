@@ -12,13 +12,15 @@ DEVICE_CONFIGS = [
 ]
 
 DEVICE_ICONS = {
-    "Weighing":     "https://img.icons8.com/?size=100&id=109650&format=png&color=000000",
-    "Conductivity": "https://img.icons8.com/?size=100&id=asg3iKsBbXH7&format=png&color=000000",
-    "Magnetic":     "https://img.icons8.com/?size=100&id=31414&format=png&color=000000",
-    "XRF":          "https://img.icons8.com/?size=100&id=QVWfcpeusQau&format=png&color=000000",
-    "AI Vision":    "https://img.icons8.com/?size=100&id=5g55QDdzH1wG&format=png&color=000000",
+    "Weighing":     "images/weighing.png",
+    "Conductivity": "images/conductivity.png",
+    "Magnetic":     "images/magnetic.png",
+    "XRF":          "images/xrf.png",
+    "AI Vision":    "images/aivision.png",
 }
 
 OTHER_ICONS = {
-    "loading": "https://img.icons8.com/?size=100&id=116478&format=png&color=000000"
+    "loading": "images/loading.png",
+    "place_holder": "images/placeholder.png",
+    "maincontroller": "images/maincontroller.png",
 }
